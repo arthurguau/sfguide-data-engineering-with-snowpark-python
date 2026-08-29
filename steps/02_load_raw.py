@@ -31,8 +31,7 @@ def load_raw_table(session, tname=None, s3dir=None, year=None, schema=None):
         location = "@external.frostbyte_raw_stage/{}/{}/year={}".format(s3dir, tname, year)
     
     # we can infer schema using the parquet read option
-    df = session.read.option("compression", "snappy") \
-                            .parquet(location)
+    df = session.read.option("compression", "snappy").parquet(location)
     df.copy_into_table("{}".format(tname))
     comment_text = '''{"origin":"sf_sit-is","name":"snowpark_101_de","version":{"major":1, "minor":0},"attributes":{"is_quickstart":1, "source":"sql"}}'''
     sql_command = f"""COMMENT ON TABLE {tname} IS '{comment_text}';"""

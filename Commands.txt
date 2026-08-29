@@ -1,0 +1,404 @@
+
+
+################################################################
+   1. Prepare infrustructure:
+        - roles
+        - warehouses
+        - databases
+        - schemas
+        - stages
+        - tables
+################################################################
+
+# create role
+USE ROLE HOL_ROLE;
+
+# create warehouse
+USE WAREHOUSE HOL_WH;
+
+# create database
+USE DATABASE HOL_DB;
+
+# setup schemas
+CREATE OR REPLACE SCHEMA EXTERNAL;
+CREATE OR REPLACE SCHEMA RAW_POS;
+CREATE OR REPLACE SCHEMA RAW_CUSTOMER;
+CREATE OR REPLACE SCHEMA HARMONIZED;
+CREATE OR REPLACE SCHEMA ANALYTICS;
+
+# define data models
+-- landing zone
+CREATE OR REPLACE SCHEMA EXTERNAL;
+
+-- raw tier
+CREATE OR REPLACE SCHEMA RAW_POS;
+CREATE OR REPLACE SCHEMA RAW_CUSTOMER;
+
+-- harmonized tier
+CREATE OR REPLACE SCHEMA HARMONIZED;
+
+create or replace TABLE HOL_DB.HARMONIZED.ORDERS (
+	ORDER_ID          NUMBER(38,0),
+	TRUCK_ID          NUMBER(38,0),
+	ORDER_TS          TIMESTAMP_NTZ(9),
+	ORDER_TS_DATE     DATE,
+	ORDER_DETAIL_ID   NUMBER(38,0),
+	LINE_NUMBER       NUMBER(38,0),
+	TRUCK_BRAND_NAME  VARCHAR(16777216),
+	MENU_TYPE         VARCHAR(16777216),
+	PRIMARY_CITY      VARCHAR(16777216),
+	REGION            VARCHAR(16777216),
+	COUNTRY           VARCHAR(16777216),
+	FRANCHISE_FLAG    NUMBER(38,0),
+	FRANCHISE_ID      NUMBER(38,0),
+	FRANCHISEE_FIRST_NAME VARCHAR(16777216),
+	FRANCHISEE_LAST_NAME  VARCHAR(16777216),
+	LOCATION_ID      FLOAT,
+	MENU_ITEM_ID     NUMBER(38,0),
+	MENU_ITEM_NAME   VARCHAR(16777216),
+	QUANTITY         NUMBER(38,0),
+	UNIT_PRICE       NUMBER(38,4),
+	PRICE            NUMBER(38,4),
+	ORDER_AMOUNT     NUMBER(38,4),
+	ORDER_TAX_AMOUNT      VARCHAR(16777216),
+	ORDER_DISCOUNT_AMOUNT VARCHAR(16777216),
+	ORDER_TOTAL           NUMBER(38,4),
+	META_UPDATED_AT       TIMESTAMP_NTZ(9)
+);
+
+CREATE STREAM HARMONIZED.ORDERS_STREAM ON TABLE HARMONIZED.ORDERS
+
+-- analytics tier
+CREATE OR REPLACE SCHEMA ANALYTICS;
+
+create or replace TABLE HOL_DB.ANALYTICS.DAILY_CITY_METRICS (
+	DATE                           DATE,
+	CITY_NAME                      VARCHAR(134217728),
+	COUNTRY_DESC                   VARCHAR(134217728),
+	DAILY_SALES                    VARCHAR(134217728),
+	AVG_TEMPERATURE_FAHRENHEIT     NUMBER(38,0),
+	AVG_TEMPERATURE_CELSIUS        NUMBER(38,0),
+	AVG_PRECIPITATION_INCHES       NUMBER(38,0),
+	AVG_PRECIPITATION_MILLIMETERS  NUMBER(38,0),
+	MAX_WIND_SPEED_100M_MPH        NUMBER(38,0),
+	META_UPDATED_AT                TIMESTAMP_NTZ(9)
+);
+
+
+# 01. sql version
+01_setup_snowflake.sql
+
+# 02. terraform version
+[working on ...]
+
+
+################################################################
+   2. setup VSCode
+################################################################
+
+# 01. Add new connection into ~/.snowflake/connections.toml 
+
+nano  ~/.snowflake/connections.toml 
+
+default_connection_name = "snowpark"
+
+[snowpark]
+account = "ACPHOWO-VW38726"
+user = "Songqing"
+password = "Goodmorning617$"
+private_key_file = "absolute_path/rsa_key.p8"
+database = "HOL_DB"
+warehouse = "HOL_WH"
+role = "HOL_ROLE"
+authenticator = "SNOWFLAKE_JWT"
+
+# check connection configuration 
+snow connection list
+
+
+# 02. Check connection
+# For local debugging
+
+if __name__ == "__main__":
+    # Create a local Snowpark session
+    with Session.builder.config("connection_name", "snowpark").getOrCreate() as session:
+        print(f"Connected successfully to: {session.get_current_database()}")
+
+
+## ########################################################## ##
+   1. Ingest data 
+## ########################################################## ##
+
+
+################################################################
+   01. Load data - Raw data into tables:
+       - Country
+       - Franchise
+       - Location
+       - Menu
+       - Order_Detail
+       - Order_Header
+       - Truck 
+       - Customer_Loyalty
+-- ---------------------------------------------------------- --
+
+cd steps
+python3 02_load_raw.py
+
+
+################################################################
+   02. Load Weather Data - Data sharing
+-- ---------------------------------------------------------- --
+
+# data sharing:
+always seeing whatever data providers have published. 
+
+Provider: 
+Pelmorex Weather Source (formerly Weather Source)
+Data Provided: 
+Hourly historical and climatology weather data mapped to postal/ZIP code levels.
+Common Use Case: 
+Setup and data collaboration practice in Snowflake guides (such as Snowpark Python and Tasty Bytes workshops).
+
+# 01. Setup data sharing
+
+Snowsight -> Marketplace:
+Pelmorex Weather Source: Frostbyte
+
+Get button -> options:
+ - Database name: FROSTBYTE_WEATHERSOURCE
+ - Role: HOL_ROLE
+
+query data button -> 
+
+
+# 02. Data catalog -> databases -> FROSTBYTE_WEATHERSOURCE
+
+SELECT * FROM FROSTBYTE_WEATHERSOURCE.ONPOINT_ID.POSTAL_CODES LIMIT 100;
+
+
+## ########################################################## ##
+   2. Transform data 
+## ########################################################## ##
+
+################################################################
+   01. Row tier
+-- ---------------------------------------------------------- --
+
+
+
+
+################################################################
+   02. Warehouse tier
+-- ---------------------------------------------------------- --
+
+# incrementally process changes to any of the POS tables
+
+# 01. create view: 
+python3 04_create_pos_view.py
+
+select * from HOL_DB.HARMONIZED.POS_FLATTENED_V LIMIT 100;
+
+# 02. create stream on view
+python3 04_create_pos_stream.py
+
+
+-- ---------------------------------------------------------- --
+   Orders Update Sproc
+       - merge changes from the HARMONIZED.POS_FLATTENED_V_STREAM stream 
+         into our target HARMONIZED.ORDERS table
+-- ---------------------------------------------------------- --
+
+# create table: orders
+# create order stream
+# merge data from view to order
+
+
+# 01. test the procedure locally
+cd steps/06_orders_update_sp
+python3 orders_update_sp/procedure.py
+
+-- check orders table
+
+# 02. Deploy the Sproc to Snowflake
+cd steps/06_orders_update_sp
+
+-- build  code
+snow snowpark build
+
+-- deploy procedure
+prepare deployment file: snowflake.yaml
+snow snowpark deploy
+
+-- check registered procedure in catalog
+01. stage: harmonized.deployment
+02. procedure: orders_update_sp
+03. stage: zip file
+
+# 03. test deployed Sproc
+CALL ORDERS_UPDATE_SP();
+snow snowpark execute procedure "harmonized.orders_update_sp()"
+
+
+
+################################################################
+   03. Delivry/Data Mart tier
+-- ---------------------------------------------------------- --
+
+-- ---------------------------------------------------------- --
+   01. UDF - INCH_TO_MILLIMETER_UDF
+-- ---------------------------------------------------------- --
+
+# 01. in Snowflake SQL sheet
+CREATE OR REPLACE FUNCTION ANALYTICS.INCH_TO_MILLIMETER_UDF(INCH NUMBER(35,4))
+RETURNS NUMBER(35,4)
+    AS
+$$
+    inch * 25.4
+$$;
+
+-- ---------------------------------------------------------- --
+    02. UDF - Fahrenheit to Celsius
+-- ---------------------------------------------------------- --
+
+# 01. Test UDF locally
+cd 05_
+python3 fahrenheit_to_celsius_udf/function.py 35
+
+# 02. Deploy UDF
+snow snowpark build
+snow snowpark deploy
+
+-- check function
+01. function: fahrenheit_to_celsius_udf
+02. stage: zip file
+
+# 03. Test deployed UDF
+SELECT ANALYTICS.FAHRENHEIT_TO_CELSIUS_UDF(35);
+snow snowpark execute function "hol_db.analytics.fahrenheit_to_celsius_udf(35)"
+
+-- ---------------------------------------------------------- --
+   03. Daily City Metrics Update Sproc
+       - join the HARMONIZED.ORDERS data with the Weather Source data to 
+-- ---------------------------------------------------------- --
+
+# 01. test the procedure locally
+cd steps/07_daily_city_metrics_update_sp
+python3 daily_city_metrics_update_sp/procedure.py
+
+# 02. delpoy
+cd steps/07_daily_city_metrics_update_sp
+-- build code
+snow snowpark build
+-- deploy sproc
+snow snowpark deploy
+
+-- check procedure
+01. stage: 
+02. procedure: daily_city_metrics_update_sp
+03. stage: zip file
+
+# 03. test deployed Sproc
+CALL DAILY_CITY_METRICS_UPDATE_SP();
+snow snowpark execute procedure "hol_db.analytics.daily_city_metrics_update_sp()"
+
+
+################################################################
+   3. Orchestrate Jobs
+################################################################
+
+# use native VS Code extension to execute it.
+
+USE ROLE HOL_ROLE;
+USE WAREHOUSE HOL_WH;
+USE SCHEMA HOL_DB.HARMONIZED;
+
+-- ------------------------------------------------------------
+-- Step #1: Create the tasks to call our Python stored procedures
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE TASK ORDERS_UPDATE_TASK
+WAREHOUSE = HOL_WH
+WHEN
+  SYSTEM$STREAM_HAS_DATA('POS_FLATTENED_V_STREAM')
+AS
+CALL HARMONIZED.ORDERS_UPDATE_SP();
+
+CREATE OR REPLACE TASK DAILY_CITY_METRICS_UPDATE_TASK
+WAREHOUSE = HOL_WH
+AFTER ORDERS_UPDATE_TASK
+WHEN
+  SYSTEM$STREAM_HAS_DATA('ORDERS_STREAM')
+AS
+CALL ANALYTICS.DAILY_CITY_METRICS_UPDATE_SP();
+
+# check created task graph
+
+-- ------------------------------------------------------------
+-- Step #2: Execute the tasks
+-- ------------------------------------------------------------
+
+ALTER TASK DAILY_CITY_METRICS_UPDATE_TASK RESUME;
+EXECUTE TASK ORDERS_UPDATE_TASK;
+
+# 03. check the task graph
+
+# 04. once-off execuation
+EXECUTE TASK ORDERS_UPDATE_TASK;
+
+
+################################################################
+   4. Dashboard
+################################################################
+
+[working on ...]
+
+
+
+################################################################
+   5. Deploy via CI/CD
+################################################################
+
+# 01. configure Snowflake crediential into github
+
+github repository -> Settings -> Secrets and variables -> Actions -> New repository secret:
+
+SNOWFLAKE_ACCOUNT	myaccount
+SNOWFLAKE_USER	        myusername
+SNOWFLAKE_PRIVATE_KEY   mypriviateley
+SNOWFLAKE_ROLE	        HOL_ROLE
+SNOWFLAKE_WAREHOUSE	HOL_WH
+SNOWFLAKE_DATABASE	HOL_DB
+
+# 02. compose workfow file: 
+.github/workflows/build_and_deplo9y.yaml
+deploy_snowpark_apps.py
+
+# 03. github repository -> Actions -> Deploy Snowpark Apps -> Run Workflow -> Run Workflow
+
+
+################################################################
+   6. Test incrementally 
+################################################################
+
+# load data
+python3 09_process_incrementally.sql
+
+# check Dashboard
+
+
+################################################################
+   7. Clean up
+################################################################
+
+USE ROLE ACCOUNTADMIN;
+
+DROP DATABASE HOL_DB;
+DROP WAREHOUSE HOL_WH;
+DROP ROLE HOL_ROLE;
+
+-- Drop the weather share
+DROP DATABASE FROSTBYTE_WEATHERSOURCE;
+
+
+############################# End ##############################
