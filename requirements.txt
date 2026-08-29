@@ -1,2 +1,2 @@
-snowflake-snowpark-python[pandas]
+snowflake-snowpark-python
 snowflake-cli-labs
